@@ -57,7 +57,7 @@ jobs:
         with:
           target: Android64
           build-config: Release
-          sdk: latest
+          sdk: v5.7.1
           path: ${{ steps.project.outputs.path }}
 
       - name: Upload Android64 build
