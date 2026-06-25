@@ -15,17 +15,57 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Find or extract mod project
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository files:"
+          find . -maxdepth 4 -type f | sort
+
+          MOD_JSON="$(find . -maxdepth 5 -name mod.json -not -path './geode-sdk-clone/*' | head -n 1 || true)"
+          if [ -n "$MOD_JSON" ]; then
+            MOD_DIR="$(dirname "$MOD_JSON")"
+            echo "Found mod.json in: $MOD_DIR"
+            echo "path=$MOD_DIR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ZIP_FILE="$(find . -maxdepth 3 -type f -name '*.zip' | head -n 1 || true)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::No mod.json found and no .zip project found. Upload the extracted project files, not only the workflow."
+            exit 1
+          fi
+
+          echo "No mod.json found directly. Extracting: $ZIP_FILE"
+          mkdir -p extracted-project
+          unzip -q "$ZIP_FILE" -d extracted-project
+
+          MOD_JSON="$(find extracted-project -maxdepth 6 -name mod.json | head -n 1 || true)"
+          if [ -z "$MOD_JSON" ]; then
+            echo "::error::The .zip was extracted, but no mod.json was found inside it."
+            exit 1
+          fi
+
+          MOD_DIR="$(dirname "$MOD_JSON")"
+          echo "Found mod.json after extraction in: $MOD_DIR"
+          echo "path=$MOD_DIR" >> "$GITHUB_OUTPUT"
+
       - name: Build Android64
         uses: geode-sdk/build-geode-mod@main
         with:
           target: Android64
           build-config: Release
+          sdk: latest
+          path: ${{ steps.project.outputs.path }}
 
       - name: Upload Android64 build
         uses: actions/upload-artifact@v4
         with:
           name: Globed-Text-Chat-Android64
+          if-no-files-found: error
           path: |
-            build/**/*.geode
-            build/**/*.so
-            build/**/*.zip
+            ${{ steps.project.outputs.path }}/build/**/*.geode
+            ${{ steps.project.outputs.path }}/build/**/*.so
+            ${{ steps.project.outputs.path }}/build/**/*.zip
