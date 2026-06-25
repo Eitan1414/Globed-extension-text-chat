@@ -1,0 +1,104 @@
+name: Build Windows64 Geode Mod
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  build-windows64:
+    name: Windows64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find or extract mod project
+        id: project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Repository files:"
+          Get-ChildItem -Recurse -File | Select-Object -ExpandProperty FullName
+
+          $modJson = Get-ChildItem -Recurse -Filter mod.json -File |
+            Where-Object { $_.FullName -notmatch "geode-sdk-clone" } |
+            Select-Object -First 1
+
+          if ($modJson) {
+            $modDir = $modJson.Directory.FullName
+            Write-Host "Found mod.json in: $modDir"
+            "path=$modDir" >> $env:GITHUB_OUTPUT
+            "mod_json=$($modJson.FullName)" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $zipFile = Get-ChildItem -Recurse -Filter *.zip -File | Select-Object -First 1
+          if (-not $zipFile) {
+            Write-Error "No mod.json found and no .zip project found."
+            exit 1
+          }
+
+          Write-Host "No mod.json found directly. Extracting: $($zipFile.FullName)"
+          if (Test-Path extracted-project) {
+            Remove-Item extracted-project -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path extracted-project | Out-Null
+          Expand-Archive -Path $zipFile.FullName -DestinationPath extracted-project -Force
+
+          $modJson = Get-ChildItem -Path extracted-project -Recurse -Filter mod.json -File | Select-Object -First 1
+          if (-not $modJson) {
+            Write-Error "The .zip was extracted, but no mod.json was found inside it."
+            exit 1
+          }
+
+          $modDir = $modJson.Directory.FullName
+          Write-Host "Found mod.json after extraction in: $modDir"
+          "path=$modDir" >> $env:GITHUB_OUTPUT
+          "mod_json=$($modJson.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Fix mod.json Geode version format
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $modJsonPath = "${{ steps.project.outputs.mod_json }}"
+          Write-Host "Patching $modJsonPath"
+
+          $json = Get-Content $modJsonPath -Raw | ConvertFrom-Json
+          $json.geode = "5.7.1"
+
+          if ($json.version -is [string]) {
+            $json.version = $json.version.TrimStart("v")
+          }
+
+          if ($json.dependencies) {
+            foreach ($property in $json.dependencies.PSObject.Properties) {
+              if ($property.Value -is [string]) {
+                $property.Value = $property.Value.Replace(">=v", ">=")
+              }
+            }
+          }
+
+          $json | ConvertTo-Json -Depth 20 | Set-Content $modJsonPath -Encoding UTF8
+          Get-Content $modJsonPath
+
+      - name: Build Windows64
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          target: Win64
+          build-config: Release
+          sdk: 5.7.1
+          path: ${{ steps.project.outputs.path }}
+
+      - name: Upload Windows64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Globed-Text-Chat-Windows64
+          if-no-files-found: error
+          path: |
+            ${{ steps.project.outputs.path }}/build/**/*.geode
+            ${{ steps.project.outputs.path }}/build/**/*.dll
+            ${{ steps.project.outputs.path }}/build/**/*.zip
